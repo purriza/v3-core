@@ -11,6 +11,7 @@ import './libraries/Tick.sol';
 import './libraries/TickBitmap.sol';
 import './libraries/Position.sol';
 import './libraries/Oracle.sol';
+import './libraries/OracleLibrary.sol';
 
 import './libraries/FullMath.sol';
 import './libraries/FixedPoint128.sol';
@@ -37,6 +38,12 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
     using Position for mapping(bytes32 => Position.Info);
     using Position for Position.Info;
     using Oracle for Oracle.Observation[65535];
+
+    // Constants for dynamic fee calculation
+    uint32 private constant TWAP_INTERVAL = 600; // 10 minutes
+    uint24 private constant LOW_FEE = 500;       // 0.05%
+    uint24 private constant MEDIUM_FEE = 3000;   // 0.3%
+    uint24 private constant HIGH_FEE = 10000;    // 1%
 
     /// @inheritdoc IUniswapV3PoolImmutables
     address public immutable override factory;
@@ -69,6 +76,8 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
         uint8 feeProtocol;
         // whether the pool is locked
         bool unlocked;
+        // The current dynamic fee (updated with every swap)
+        uint24 currentDynamicFee;
     }
     /// @inheritdoc IUniswapV3PoolState
     Slot0 public override slot0;
@@ -593,6 +602,7 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
     }
 
     /// @inheritdoc IUniswapV3PoolActions
+    // External swap function modified to include the dynamic fee calculation
     function swap(
         address recipient,
         bool zeroForOne,
@@ -600,6 +610,97 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
         uint160 sqrtPriceLimitX96,
         bytes calldata data
     ) external override noDelegateCall returns (int256 amount0, int256 amount1) {
+        // Compute the dynamic fee
+        uint24 dynamicFee = _getDynamicFee();
+        currentDynamicFee = dynamicFee;
+
+        // Call to internal swap
+        (int256 amount0, int256 amount1) = _internalSwap(
+            recipient,
+            zeroForOne,
+            amountSpecified,
+            sqrtPriceLimitX96,
+            data,
+            dynamicFee
+        );
+    }
+
+    /// @notice Calculates the dynamic fee based on TWAP 
+    function _getDynamicFee() internal view returns (uint24) {
+        // Get the current price
+        (uint160 sqrtPriceX96, , , , , , ,) = slot0();
+        uint256 currentPrice = _getPriceFromSqrtPrice(sqrtPriceX96);
+
+        // Get 10 minute TWAP
+        uint256 twapPrice = getTWAP();
+
+        // Compute the price difference percentage
+        uint256 priceDifferencePerc = _getPriceDifferencePercentage(
+            currentPrice,
+            twapPrice
+        );
+
+        // Fee logic
+        if (priceDiferencePerc < 50) { // < 0.5%
+            return LOW_FEE;
+        } 
+        else if (priceDiferencePerc > 150) { // > 1.5%
+            return HIGH_FEE;
+        }
+        else { // 0.5% - 1.5%
+            return MEDIUM_FEE;
+        }  
+    }
+
+    /// @notice Calculates the current price using sqrtPriceX96
+    function _getPriceFromSqrtPrice(
+        uint160 sqrtPriceX96
+    ) private pure returns (uint256) {
+        return (uint256(sqrtPriceX96) * uint256(sqrtPriceX96) * 1e18) >> (96 * 2);
+    }
+
+    /// @notice Calculates the TWAP for the specified interval
+    function _getTWAP() private view returns (uint256){
+        (int56 tickCumulativeLast) = OracleLibrary.consult(
+            address(this),
+            TWAP_INTERVAL
+        );
+
+        int24 timeWeightedAverageTick = int24(
+            tickCumulativeLast / int56(TWAP_INTERVAL)
+        );
+
+        return OracleLibrary.getQuoteAtTick(
+            timeWeightedAverageTick,
+            1e18,
+            address(0),
+            address(0)
+        );
+    }
+
+    /// @notice Calculates the percentage difference between the current price and the twap price
+    function _getPriceDifferencePercentage(
+        uint256 currentPrice,
+        uint256 twapPrice
+    ) private pure returns (uint256) {
+        if (twapPrice == 0) return 0;
+        
+        uint256 absoluteDifference = currentPrice > twapPrice 
+            ? currentPrice - twapPrice 
+            : twapPrice - currentPrice;
+        
+        return (absoluteDifference * 10000) / twapPrice;
+    }
+
+    // Internal swap function including dynamicFee parameter
+    function _internalSwap(
+        address recipient,
+        bool zeroForOne,
+        int256 amountSpecified,
+        uint160 sqrtPriceLimitX96,
+        bytes calldata data,
+        uint24 dynamicFee
+    ) internal returns (int256 amount0, int256 amount1) {
         require(amountSpecified != 0, 'AS');
 
         Slot0 memory slot0Start = slot0;
@@ -660,6 +761,8 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
             step.sqrtPriceNextX96 = TickMath.getSqrtRatioAtTick(step.tickNext);
 
             // compute values to swap to the target tick, price limit, or point where input/output amount is exhausted
+
+            // Fee value used updated to the dynamic one
             (state.sqrtPriceX96, step.amountIn, step.amountOut, step.feeAmount) = SwapMath.computeSwapStep(
                 state.sqrtPriceX96,
                 (zeroForOne ? step.sqrtPriceNextX96 < sqrtPriceLimitX96 : step.sqrtPriceNextX96 > sqrtPriceLimitX96)
@@ -667,7 +770,7 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
                     : step.sqrtPriceNextX96,
                 state.liquidity,
                 state.amountSpecifiedRemaining,
-                fee
+                dynamicFee //fee
             );
 
             if (exactInput) {
