@@ -28,8 +28,7 @@ interface IUniswapV3PoolState {
             uint16 observationCardinality,
             uint16 observationCardinalityNext,
             uint8 feeProtocol,
-            bool unlocked,
-            uint24 currentDynamicFee
+            bool unlocked
         );
 
     /// @notice The fee growth as a Q128.128 fees of token0 collected per unit of liquidity for the entire life of the pool
@@ -39,6 +38,9 @@ interface IUniswapV3PoolState {
     /// @notice The fee growth as a Q128.128 fees of token1 collected per unit of liquidity for the entire life of the pool
     /// @dev This value can overflow the uint256
     function feeGrowthGlobal1X128() external view returns (uint256);
+
+    /// @notice The current fee applied in the last swap
+    function currentDynamicFee() external view returns (uint24);
 
     /// @notice The amounts of token0 and token1 that are owed to the protocol
     /// @dev Protocol fees will never exceed uint128 max in either token

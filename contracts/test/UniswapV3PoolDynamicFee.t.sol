@@ -35,15 +35,15 @@ contract UniswapV3PoolDynamicFeeTest is UniswapV3PoolDynamicFeeFixture {
         vm.stopPrank();
 
         // Check the dynamic fee calculation
-        (, , , , , , , uint24 dynamicFee) = uniswapV3Pool.slot0();
+        uint24 currentDynamicFee = uniswapV3Pool.currentDynamicFee();
         
         // Dynamic fee should be calculated
-        assertGt(uint256(dynamicFee), 0, "Dynamic fee should be calculated");
+        assertGt(uint256(currentDynamicFee), 0, "Dynamic fee should be calculated");
         
         // Checking if the fee is within an expected range
-        assertLt(uint256(dynamicFee), 100000, "Dynamic fee should be within reasonable bounds");
+        assertLt(uint256(currentDynamicFee), 100000, "Dynamic fee should be within reasonable bounds");
 
         // Log the calculated dynamic fee for inspection
-        emit log_named_uint("Calculated Dynamic Fee:", uint256(dynamicFee));
+        emit log_named_uint("Calculated Dynamic Fee:", uint256(currentDynamicFee));
     }
 }

@@ -76,8 +76,6 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
         uint8 feeProtocol;
         // whether the pool is locked
         bool unlocked;
-        // The current dynamic fee (updated with every swap)
-        uint24 currentDynamicFee;
     }
     /// @inheritdoc IUniswapV3PoolState
     Slot0 public override slot0;
@@ -86,6 +84,8 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
     uint256 public override feeGrowthGlobal0X128;
     /// @inheritdoc IUniswapV3PoolState
     uint256 public override feeGrowthGlobal1X128;
+    /// @inheritdoc IUniswapV3PoolState
+    uint24 public override currentDynamicFee;
 
     // accumulated protocol fees in token0/token1 units
     struct ProtocolFees {
@@ -291,8 +291,7 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
             observationCardinality: cardinality,
             observationCardinalityNext: cardinalityNext,
             feeProtocol: 0,
-            unlocked: true,
-            currentDynamicFee: 0
+            unlocked: true
         });
 
         emit Initialize(sqrtPriceX96, tick);
@@ -670,7 +669,7 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
             step.sqrtPriceNextX96 = TickMath.getSqrtRatioAtTick(step.tickNext);
 
             // Compute the dynamic fee
-            slot0.currentDynamicFee = _getDynamicFee();
+            currentDynamicFee = _getDynamicFee();
 
             // compute values to swap to the target tick, price limit, or point where input/output amount is exhausted
             (state.sqrtPriceX96, step.amountIn, step.amountOut, step.feeAmount) = SwapMath.computeSwapStep(
@@ -680,7 +679,7 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
                     : step.sqrtPriceNextX96,
                 state.liquidity,
                 state.amountSpecifiedRemaining,
-                 slot0.currentDynamicFee //fee
+                 currentDynamicFee
             );
 
             if (exactInput) {
