@@ -28,7 +28,8 @@ interface IUniswapV3PoolState {
             uint16 observationCardinality,
             uint16 observationCardinalityNext,
             uint8 feeProtocol,
-            bool unlocked
+            bool unlocked,
+            uint24 currentDynamicFee
         );
 
     /// @notice The fee growth as a Q128.128 fees of token0 collected per unit of liquidity for the entire life of the pool

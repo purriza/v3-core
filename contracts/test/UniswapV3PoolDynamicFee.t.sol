@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: BUSL-1.1
 pragma solidity =0.7.6;
+pragma abicoder v2;
 
 import "./utils/UniswapV3PoolDynamicFeeFixture.sol";
 
@@ -23,6 +24,7 @@ contract UniswapV3PoolDynamicFeeTest is UniswapV3PoolDynamicFeeFixture {
                 address(this),
                 true, 
                 int256(10_000 * 10**18),
+                TickMath.MIN_SQRT_RATIO + 1,
                 abi.encode(0)
             );
 
@@ -35,14 +37,13 @@ contract UniswapV3PoolDynamicFeeTest is UniswapV3PoolDynamicFeeFixture {
         // Check the dynamic fee calculation
         (, , , , , , , uint24 dynamicFee) = uniswapV3Pool.slot0();
         
-        // Add your specific assertions about the fee calculation
-        assertGt(dynamicFee, 0, "Dynamic fee should be calculated");
+        // Dynamic fee should be calculated
+        assertGt(uint256(dynamicFee), 0, "Dynamic fee should be calculated");
         
-        // You might want to add more specific checks based on your implementation
-        // For example, checking if the fee is within an expected range
-        assertLt(dynamicFee, 100000, "Dynamic fee should be within reasonable bounds");
+        // Checking if the fee is within an expected range
+        assertLt(uint256(dynamicFee), 100000, "Dynamic fee should be within reasonable bounds");
 
         // Log the calculated dynamic fee for inspection
-        console.log("Calculated Dynamic Fee:", dynamicFee);
+        emit log_named_uint("Calculated Dynamic Fee:", uint256(dynamicFee));
     }
 }

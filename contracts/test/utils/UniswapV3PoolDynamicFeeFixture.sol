@@ -1,10 +1,12 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: BUSL-1.1
 pragma solidity =0.7.6;
+pragma abicoder v2;
 
 import "contracts/UniswapV3Pool.sol";
 import "contracts/UniswapV3Factory.sol";
-import "contracts/UniswapV3PoolDeployer.sol";
 import "contracts/interfaces/IUniswapV3Pool.sol";
+import "contracts/interfaces/callback/IUniswapV3MintCallback.sol";
+import "contracts/interfaces/callback/IUniswapV3SwapCallback.sol";
 import "contracts/libraries/TickMath.sol";
 
 import "contracts/test/TestERC20.sol";
@@ -12,14 +14,13 @@ import "contracts/test/TestERC20.sol";
 import "forge-std/Test.sol";
 import { console } from "forge-std/console.sol";
 
-contract UniswapV3PoolDynamicFeeFixture is Test {
+contract UniswapV3PoolDynamicFeeFixture is Test, IUniswapV3MintCallback, IUniswapV3SwapCallback {
     // Contract variables
     UniswapV3Pool public uniswapV3Pool;
     UniswapV3Factory public uniswapV3Factory;
-    UniswapV3PoolDeployer public uniswapV3PoolDeployer;
 
+    TestERC20 public token0; 
     TestERC20 public token1; 
-    TestERC20 public token2; 
 
     // Addresses
     address public poolDeployer = vm.addr(1);
@@ -44,12 +45,17 @@ contract UniswapV3PoolDynamicFeeFixture is Test {
         vm.startPrank(poolDeployer);
 
         // Deploy and deal TestERC20 tokens
+        token0 = new TestERC20(500_000 * 1e18);
         token1 = new TestERC20(500_000 * 1e18);
-        token2 = new TestERC20(500_000 * 1e18);
 
+        // Test contract, to add liquidity
+        token0.mint(address(this), 100_000 * 10**18);
+        token1.mint(address(this), 100_000 * 10**18);
+
+        // Users
         token0.mint(alice, 100_000 * 10**18);
-        token0.mint(alice, 100_000 * 10**18);
-        token1.mint(bob, 100_000 * 10**18);
+        token1.mint(alice, 100_000 * 10**18);
+        token0.mint(bob, 100_000 * 10**18);
         token1.mint(bob, 100_000 * 10**18);
 
         // Deploy UniswapV3Factory contract
@@ -57,32 +63,32 @@ contract UniswapV3PoolDynamicFeeFixture is Test {
 
         // Deploy the UniswapV3Pool
         address poolAddress = uniswapV3Factory.createPool(
+            address(token0), 
             address(token1), 
-            address(token2), 
             fee
         );
-        uniswapV3Pool = IUniswapV3Pool(poolAddress);
+        uniswapV3Pool = UniswapV3Pool(poolAddress);
 
         // Get tick spacing
         tickSpacing = uniswapV3Pool.tickSpacing();
 
         // Initialize the pool
-        (uint160 sqrtPriceX96, ) = calculateSqrtPriceX96AndTick(1, 1);
+        (uint160 sqrtPriceX96, ) = getSqrtPriceX96AndTick(1, 1);
         uniswapV3Pool.initialize(sqrtPriceX96);
 
+        vm.stopPrank();
+
         // Approve tokens for adding liquidity
-        token1.approve(address(this), type(uint256).max);
-        token2.approve(address(this), type(uint256).max);
+        token0.approve(poolAddress, type(uint256).max);
+        token1.approve(poolAddress, type(uint256).max);
 
         // Add liquidity
         addLiquidity(
-            -tickSpacing * 100,  // Lower tick
-            tickSpacing * 100,   // Upper tick
+            -tickSpacing * 10,   // Lower tick
+            tickSpacing * 10,    // Upper tick
             100 * 1e18,          // Amount of token0
             100 * 1e18           // Amount of token1
         );
-
-        vm.stopPrank();
     }
 
     // Helper function to add liquidity
@@ -91,8 +97,8 @@ contract UniswapV3PoolDynamicFeeFixture is Test {
         int24 tickUpper,
         uint256 amount0Desired,
         uint256 amount1Desired
-    ) internal returns (uint256 amount0, uint256 amount1, uint128 liquidity) {
-        (amount0, amount1, liquidity) = uniswapV3Pool.mint(
+    ) internal returns (uint256 amount0, uint256 amount1) {
+        (amount0, amount1) = uniswapV3Pool.mint(
             poolDeployer,
             tickLower,
             tickUpper,
@@ -112,6 +118,7 @@ contract UniswapV3PoolDynamicFeeFixture is Test {
         // Convert price to sqrt(price)
         sqrtPriceX96 = uint160(sqrt(price) * (2**96));
         
+        sqrtPriceX96 = uint160(2**96);
         // Calculating the exact tick is complex and might require more precise logic
         tick = 0;
     }
@@ -123,6 +130,36 @@ contract UniswapV3PoolDynamicFeeFixture is Test {
         while (z < y) {
             y = z;
             z = (x / z + z) / 2;
+        }
+    }
+
+    /// @inheritdoc IUniswapV3MintCallback
+    function uniswapV3MintCallback(
+        uint256 amount0Owed,
+        uint256 amount1Owed,
+        bytes calldata data
+    ) external override {
+        // Transfer required tokens
+        if (amount0Owed > 0) {
+            token0.transfer(msg.sender, amount0Owed);
+        }
+        if (amount1Owed > 0) {
+            token1.transfer(msg.sender, amount1Owed);
+        }
+    }
+
+    /// @inheritdoc IUniswapV3SwapCallback
+    function uniswapV3SwapCallback(
+        int256 amount0Delta,
+        int256 amount1Delta,
+        bytes calldata data
+    ) external override {
+        // Transfer required tokens
+        if (amount0Delta > 0) {
+            token0.transfer(msg.sender, uint256(amount0Delta));
+        }
+        if (amount1Delta > 0) {
+            token1.transfer(msg.sender, uint256(amount1Delta));
         }
     }
 }
