@@ -679,7 +679,7 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
                     : step.sqrtPriceNextX96,
                 state.liquidity,
                 state.amountSpecifiedRemaining,
-                 currentDynamicFee
+                currentDynamicFee
             );
 
             if (exactInput) {
@@ -805,10 +805,10 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
         uint256 currentPrice = _getPriceFromSqrtPrice(slot0.sqrtPriceX96);
 
         // Get 10 minute TWAP
-        uint256 twapPrice = _getTWAP();
+        uint256 twapPrice = this.getTWAP();
 
         // Compute the price difference percentage
-        uint256 priceDifferencePerc = _getPriceDifferencePercentage(
+        uint256 priceDifferencePerc = this.getPriceDifferencePercentage(
             currentPrice,
             twapPrice
         );
@@ -832,36 +832,69 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
         return (uint256(sqrtPriceX96) * uint256(sqrtPriceX96) * 1e18) >> (96 * 2);
     }
 
-    /// @notice Calculates the TWAP for the specified interval
-    function _getTWAP() private view returns (uint256){
-        (int56 tickCumulativeLast, ) = OracleLibrary.consult(
-            address(this),
-            TWAP_INTERVAL
-        );
+    /// @notice Calculates the TWAP for the specified interval (Should be private, making it public to use it from the tests)
+    function getTWAP() public view returns (uint256){
+        uint32 time = _blockTimestamp();
+        uint32 target = time - TWAP_INTERVAL;
 
-        int24 timeWeightedAverageTick = int24(
-            tickCumulativeLast / int56(TWAP_INTERVAL)
-        );
+        Oracle.Observation memory beforeOrAt = observations[(slot0.observationIndex + 1) % slot0.observationCardinality];
+        if (!beforeOrAt.initialized) beforeOrAt = observations[0];
 
-        return OracleLibrary.getQuoteAtTick(
-            timeWeightedAverageTick,
-            1e18,
-            address(0),
-            address(0)
-        );
+        // ensure that the target is chronologically at or after the oldest observation
+        if (lte(time, beforeOrAt.blockTimestamp, target)) {
+            (int56 tickCumulativeLast, ) = OracleLibrary.consult(
+                address(this),
+                TWAP_INTERVAL
+            );
+
+            int24 timeWeightedAverageTick = int24(
+                tickCumulativeLast / int56(TWAP_INTERVAL)
+            );
+
+            return OracleLibrary.getQuoteAtTick(
+                timeWeightedAverageTick,
+                1e18,
+                address(0),
+                address(0)
+            );
+        }
+        else {
+            return _getPriceFromSqrtPrice(slot0.sqrtPriceX96);
+        }
     }
 
-    /// @notice Calculates the percentage difference between the current price and the twap price
-    function _getPriceDifferencePercentage(
+    /// @notice comparator for 32-bit timestamps
+    /// @dev safe for 0 or 1 overflows, a and b _must_ be chronologically before or equal to time
+    /// @param time A timestamp truncated to 32 bits
+    /// @param a A comparison timestamp from which to determine the relative position of `time`
+    /// @param b From which to determine the relative position of `time`
+    /// @return bool Whether `a` is chronologically <= `b`
+    function lte(
+        uint32 time,
+        uint32 a,
+        uint32 b
+    ) private pure returns (bool) {
+        // if there hasn't been overflow, no need to adjust
+        if (a <= time && b <= time) return a <= b;
+
+        uint256 aAdjusted = a > time ? a : a + 2**32;
+        uint256 bAdjusted = b > time ? b : b + 2**32;
+
+        return aAdjusted <= bAdjusted;
+    }
+
+    /// @notice Calculates the percentage difference between the current price and the twap price (Should be private, making it public to use it from the tests)
+    function getPriceDifferencePercentage(
         uint256 currentPrice,
         uint256 twapPrice
-    ) private pure returns (uint256) {
+    ) public pure returns (uint256) {
         if (twapPrice == 0) return 0;
         
         uint256 absoluteDifference = currentPrice > twapPrice 
             ? currentPrice - twapPrice 
             : twapPrice - currentPrice;
         
+        // 10000 in order to get 2 decimals
         return (absoluteDifference * 10000) / twapPrice;
     }
 
